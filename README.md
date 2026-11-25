@@ -13,7 +13,7 @@ React/Vite ──JWT──> NestJS REST API ──> MongoDB Atlas
                            └──> Groq answer generation
 ```
 
-`apps/server` owns authentication, authorization, document processing, retrieval, and generation. `apps/client` owns the responsive client. All user data queries include the authenticated user ID. The API key and database URI stay on the server.
+`apps/server` owns authentication, authorization, document processing, retrieval, and generation. `apps/client` owns the public landing page and responsive research workspace. The landing page is at `/`, sign in and registration are at `/login` and `/register`, and the protected dashboard is at `/app`. All user data queries include the authenticated user ID. The API key and database URI stay on the server.
 
 ## Development checklist
 
