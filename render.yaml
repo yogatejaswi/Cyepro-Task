@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: cyepro-hyundai-api
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: npm ci && npm run build -w @hyundai/api
+    startCommand: npm run start -w @hyundai/api
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: FRONTEND_URL
+        value: https://web-zeta-lemon-h9c19m3fzu.vercel.app
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: MONGODB_URI
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
