@@ -39,6 +39,20 @@ export class DocumentsService {
     const parts: Buffer[] = [];
     return new Promise((resolve, reject) => { this.bucket().openDownloadStream(key).on('data', (p: Buffer) => parts.push(p)).on('end', () => resolve(Buffer.concat(parts))).on('error', reject); });
   }
+  private async waitForSearchVisibility(doc: any, embedding: number[]) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        const rows = await this.chunks.aggregate([
+          { $vectorSearch: { index: process.env.VECTOR_INDEX_NAME || 'brochure_vector_index', path: 'embedding', queryVector: embedding, numCandidates: 20, limit: 1, filter: { userId: doc.uploadedBy, documentId: doc._id } } },
+          { $project: { _id: 1 } }
+        ]);
+        if (rows.length) return;
+      } catch (err) { lastError = err; }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    throw new Error(`Chunks were stored but are not searchable in Atlas yet${lastError ? `: ${String((lastError as Error).message).slice(0, 180)}` : ''}`);
+  }
   async process(id: string) {
     const doc = await this.docs.findOneAndUpdate({ _id: oid(id), processingStatus: 'Pending' }, { $set: { processingStatus: 'Processing', errorMessage: '' } }, { new: true });
     if (!doc) return;
@@ -61,6 +75,7 @@ export class DocumentsService {
       await this.chunks.deleteMany({ documentId: doc._id });
       try { await this.chunks.insertMany(records, { ordered: true }); }
       catch (err) { await this.chunks.deleteMany({ documentId: doc._id }); throw err; }
+      await this.waitForSearchVisibility(doc, records[0].embedding);
       await this.docs.updateOne({ _id: doc._id }, { $set: { processingStatus: 'Completed', totalPages: pages.length, totalChunks: records.length, processedAt: new Date() } });
       await this.logs.create({ documentId: doc._id, status: 'Completed', message: `Stored ${records.length} chunks from ${pages.length} pages` });
     } catch (err: any) {

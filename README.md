@@ -25,7 +25,7 @@ React/Vite ──JWT──> NestJS REST API ──> MongoDB Atlas
 - [x] Environment templates, deployment configuration, API guide
 - [x] Live Atlas connection, vector index creation, and auth/API smoke test
 - [x] Live PDF ingestion with local embeddings and Atlas vector retrieval
-- [ ] Live Groq answer generation and citation verification
+- [x] Live Groq answer generation, citations, comparison, and recommendation
 - [ ] GitHub remote, public deployment URLs, demonstration video (requires accounts and a live configured deployment)
 
 ## Local setup
@@ -115,7 +115,7 @@ Upload returns `Pending`; the API asynchronously transitions through `Processing
 
 ## Verification
 
-Run `npm run build` and `npm test`. These check TypeScript, client bundling, and document processing helpers, including a real PDF byte stream. With the API running and Atlas configured, `npm run test:live -w @hyundai/api` checks registration, login, protected routes, and invalid upload. Set `BROCHURE_FILE` to a PDF path to also check GridFS upload, status, authorized preview, model correction, and deletion. With `BROCHURE_FILE` and a Groq key configured, `npm run test:rag -w @hyundai/api` ingests the brochure, waits for processing, checks a cited answer, and cleans up its test account and document. A failed vector index query means the Atlas index is absent or not ready; it is not silently replaced with another retrieval method.
+Run `npm run build` and `npm test`. These check TypeScript, client bundling, and document processing helpers, including a real PDF byte stream. With the API running and Atlas configured, `npm run test:live -w @hyundai/api` checks registration, login, protected routes, and invalid upload. Set `BROCHURE_FILE` to a PDF path to also check GridFS upload, status, authorized preview, model correction, and deletion. With `BROCHURE_FILE` and a Groq key configured, `npm run test:rag -w @hyundai/api` ingests the brochure, waits for processing, checks a cited answer, a follow up, and an unsupported question, then cleans up its test account and document. Set `SECOND_BROCHURE_FILE` to another model's PDF to include comparison and recommendation checks. A failed vector index query means the Atlas index is absent or not ready; it is not silently replaced with another retrieval method.
 
 ## Operational notes
 

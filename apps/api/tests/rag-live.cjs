@@ -9,41 +9,65 @@ if (!process.env.GROQ_API_KEY || !process.env.BROCHURE_FILE) throw new Error('Se
 const base = process.env.API_BASE_URL || 'http://localhost:4000/api';
 const email = `codex-rag-${crypto.randomBytes(6).toString('hex')}@example.invalid`;
 const password = crypto.randomBytes(18).toString('base64url');
-let token; let documentId;
+let token; const documentIds = [];
 async function call(route, method = 'GET', body) {
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
   if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
   const response = await fetch(base + route, { method, headers, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
   return { status: response.status, data: await response.json() };
 }
+async function uploadAndWait(filePath, vehicleModel) {
+  const file = fs.readFileSync(path.resolve(filePath));
+  const form = new FormData();
+  form.append('file', new Blob([file], { type: 'application/pdf' }), path.basename(filePath));
+  form.append('vehicleModel', vehicleModel);
+  const uploaded = await call('/documents/upload', 'POST', form);
+  assert.equal(uploaded.status, 201, JSON.stringify(uploaded.data));
+  const id = uploaded.data._id; documentIds.push(id);
+  let status;
+  for (let i = 0; i < 90; i++) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    status = (await call(`/documents/${id}/status`)).data;
+    if (status.processingStatus === 'Completed' || status.processingStatus === 'Failed') break;
+  }
+  assert.equal(status.processingStatus, 'Completed', JSON.stringify(status));
+  assert.ok(status.totalChunks > 0);
+  return { id, status };
+}
 async function main() {
   try {
     const registered = await call('/auth/register', 'POST', { name: 'RAG Smoke Test', email, password });
     assert.equal(registered.status, 201, JSON.stringify(registered.data));
     token = registered.data.token;
-    const file = fs.readFileSync(path.resolve(process.env.BROCHURE_FILE));
-    const form = new FormData();
-    form.append('file', new Blob([file], { type: 'application/pdf' }), path.basename(process.env.BROCHURE_FILE));
-    form.append('vehicleModel', 'Creta');
-    const uploaded = await call('/documents/upload', 'POST', form);
-    assert.equal(uploaded.status, 201, JSON.stringify(uploaded.data));
-    documentId = uploaded.data._id;
-    let status;
-    for (let i = 0; i < 90; i++) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      status = (await call(`/documents/${documentId}/status`)).data;
-      if (status.processingStatus === 'Completed' || status.processingStatus === 'Failed') break;
-    }
-    assert.equal(status.processingStatus, 'Completed', JSON.stringify(status));
-    assert.ok(status.totalChunks > 0);
-    const answer = await call('/chat', 'POST', { message: 'What are the engine displacement options documented for Creta?', documentIds: [documentId] });
+    const { id: cretaId, status } = await uploadAndWait(process.env.BROCHURE_FILE, 'Creta');
+    const answer = await call('/chat', 'POST', { message: 'What are the engine displacement options documented for Creta?', documentIds: [cretaId] });
     assert.equal(answer.status, 201, JSON.stringify(answer.data));
     assert.ok(answer.data.message.sources.length > 0);
     assert.ok(answer.data.message.sources.every(source => source.vehicleModel === 'Creta' && source.pageNumber > 0));
     assert.match(answer.data.message.content, /\[\d+\]/);
     console.log(`Live RAG smoke test passed: ${status.totalChunks} chunks, ${answer.data.message.sources.length} retrieved sources`);
+    const followUp = await call('/chat', 'POST', { message: 'What about the diesel version?', conversationId: answer.data.conversationId, documentIds: [cretaId] });
+    assert.equal(followUp.status, 201, JSON.stringify(followUp.data));
+    assert.ok(followUp.data.message.sources.length > 0);
+    const unsupported = await call('/chat', 'POST', { message: 'What is the exact on-road price of this Creta in the year 2040?', conversationId: answer.data.conversationId, documentIds: [cretaId] });
+    assert.equal(unsupported.status, 201, JSON.stringify(unsupported.data));
+    assert.match(unsupported.data.message.content, /(?:not|unavailable|no information|does not|cannot|brochure)/i);
+    console.log('Live follow-up and unsupported-question checks passed');
+    if (process.env.SECOND_BROCHURE_FILE) {
+      await uploadAndWait(process.env.SECOND_BROCHURE_FILE, 'Alcazar');
+      const comparison = await call('/vehicles/compare', 'POST', { models: ['Creta', 'Alcazar'], focus: 'Compare documented engine options and seating.' });
+      assert.equal(comparison.status, 201, JSON.stringify(comparison.data));
+      assert.ok(comparison.data.sources.some(source => source.vehicleModel === 'Creta'));
+      assert.ok(comparison.data.sources.some(source => source.vehicleModel === 'Alcazar'));
+      assert.match(comparison.data.content, /\|/);
+      const recommendation = await call('/vehicles/recommend', 'POST', { requirements: 'I need seating for six people and prefer documented safety features.' });
+      assert.equal(recommendation.status, 201, JSON.stringify(recommendation.data));
+      assert.ok(recommendation.data.sources.length > 0);
+      console.log('Live model comparison and recommendation passed');
+    }
   } finally {
-    if (documentId && token) {
+    for (const documentId of documentIds) {
+      if (!token) break;
       const result = await call(`/documents/${documentId}`, 'DELETE');
       if (result.status !== 200) console.error(`Test document API cleanup returned ${result.status}`);
     }

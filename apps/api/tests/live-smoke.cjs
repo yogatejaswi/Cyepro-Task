@@ -4,11 +4,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const dns = require('node:dns');
 const mongoose = require('mongoose');
+const { GridFSBucket } = require('mongodb');
 const { EmbeddingsService } = require('../dist/embeddings.js');
 if (process.env.MONGODB_DNS_SERVERS) dns.setServers(process.env.MONGODB_DNS_SERVERS.split(',').map(x => x.trim()).filter(Boolean));
 const base = process.env.API_BASE_URL || 'http://localhost:4000/api';
 const email = `codex-smoke-${crypto.randomBytes(6).toString('hex')}@example.invalid`;
 const password = crypto.randomBytes(18).toString('base64url');
+let token; let documentId;
 async function call(path, method = 'GET', body, token) {
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
   if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
@@ -21,6 +23,7 @@ async function main() {
     const registered = await call('/auth/register', 'POST', { name: 'Smoke Test', email, password });
     assert.equal(registered.status, 201);
     assert.ok(registered.data.token);
+    token = registered.data.token;
     assert.equal((await call('/auth/login', 'POST', { email, password: 'wrong-password' })).status, 401);
     assert.equal((await call('/auth/login', 'POST', { email, password })).status, 201);
     assert.equal((await call('/auth/profile', 'GET', undefined, registered.data.token)).data.email, email);
@@ -33,8 +36,9 @@ async function main() {
       const upload = await call('/documents/upload', 'POST', valid, registered.data.token);
       assert.equal(upload.status, 201, JSON.stringify(upload.data));
       const id = upload.data._id;
+      documentId = id;
       let status;
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 90; i++) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         status = (await call(`/documents/${id}/status`, 'GET', undefined, registered.data.token)).data;
         if (['Completed', 'Failed'].includes(status.processingStatus)) break;
@@ -45,7 +49,7 @@ async function main() {
         const queryVector = (await new EmbeddingsService().embed(['Creta engine displacement specifications']))[0];
         await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 15000 });
         const matches = await mongoose.connection.db.collection('document_chunks').aggregate([
-          { $vectorSearch: { index: process.env.VECTOR_INDEX_NAME || 'brochure_vector_index', path: 'embedding', queryVector, numCandidates: 100, limit: 5, filter: { userId: new mongoose.Types.ObjectId(registered.data.user.id), documentId: new mongoose.Types.ObjectId(id) } } },
+          { $vectorSearch: { index: process.env.VECTOR_INDEX_NAME || 'brochure_vector_index', path: 'embedding', queryVector, numCandidates: 100, limit: 5, filter: { userId: new mongoose.Types.ObjectId(registered.data.user.id), documentId: { $in: [new mongoose.Types.ObjectId(id)] }, vehicleModel: 'Creta' } } },
           { $project: { pageNumber: 1, content: 1, vehicleModel: 1 } }
         ]).toArray();
         assert.ok(matches.length > 0);
@@ -61,12 +65,28 @@ async function main() {
       assert.equal(edited.status, 200);
       assert.equal(edited.data.vehicleModel, 'Creta Test');
       assert.equal((await call(`/documents/${id}`, 'DELETE', undefined, registered.data.token)).status, 200);
+      documentId = undefined;
     }
     console.log('Live Atlas/API auth and document workflow smoke test passed');
   } finally {
+    if (documentId && token) {
+      try { await call(`/documents/${documentId}`, 'DELETE', undefined, token); } catch { /* Direct cleanup below handles remaining test data. */ }
+    }
     if (process.env.MONGODB_URI) {
       await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 15000 });
-      await mongoose.connection.db.collection('users').deleteOne({ email });
+      const db = mongoose.connection.db;
+      const user = await db.collection('users').findOne({ email });
+      if (user) {
+        const docs = await db.collection('documents').find({ uploadedBy: user._id }).toArray();
+        const bucket = new GridFSBucket(db, { bucketName: 'brochures' });
+        for (const doc of docs) {
+          await db.collection('document_chunks').deleteMany({ documentId: doc._id });
+          await db.collection('processing_logs').deleteMany({ documentId: doc._id });
+          try { await bucket.delete(doc.storageKey); } catch { /* File may already be removed by API. */ }
+          await db.collection('documents').deleteOne({ _id: doc._id });
+        }
+        await db.collection('users').deleteOne({ _id: user._id });
+      }
       await mongoose.disconnect();
     }
   }

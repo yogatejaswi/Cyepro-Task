@@ -36,7 +36,7 @@ describe('retrieval', () => {
     const docs: any = { distinct: vi.fn().mockResolvedValue(['Creta']) };
     const chunks: any = { aggregate: vi.fn().mockResolvedValue([{ _id: 'c1', documentId: '507f1f77bcf86cd799439012', vehicleModel: 'Creta', content: 'Six airbags are listed.', pageNumber: 4, section: 'Safety', metadata: { sourceDocumentName: 'creta.pdf' }, score: 0.95 }]) };
     const rag = new RagService(docs, chunks, { embed: vi.fn().mockResolvedValue([Array(384).fill(0.1)]) } as any);
-    (rag as any).ai = { chat: { completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: 'The brochure lists six airbags [1].' } }] }) } } };
+    (rag as any).ai = { chat: { completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: 'The brochure lists six airbags 【1】.' } }] }) } } };
     const prior = process.env.GROQ_API_KEY; process.env.GROQ_API_KEY = 'test-key';
     try {
       const result = await rag.answer(userId, 'What safety features does Creta have?');
