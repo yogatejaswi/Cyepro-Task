@@ -1,0 +1,11 @@
+{
+  "name": "hyundai-automotive-assistant",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:api": "npm run start:dev -w @hyundai/api",
+    "dev:web": "npm run dev -w @hyundai/web",
+    "build": "npm run build -w @hyundai/api && npm run build -w @hyundai/web",
+    "test": "npm run test -w @hyundai/api"
+  }
+}
