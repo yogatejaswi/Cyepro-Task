@@ -13,7 +13,7 @@ React/Vite ──JWT──> NestJS REST API ──> MongoDB Atlas
                            └──> Groq answer generation
 ```
 
-`apps/api` owns authentication, authorization, document processing, retrieval, and generation. `apps/web` owns the responsive client. All user data queries include the authenticated user ID. The API key and database URI stay on the server.
+`apps/server` owns authentication, authorization, document processing, retrieval, and generation. `apps/client` owns the responsive client. All user data queries include the authenticated user ID. The API key and database URI stay on the server.
 
 ## Development checklist
 
@@ -33,12 +33,12 @@ React/Vite ──JWT──> NestJS REST API ──> MongoDB Atlas
 Requires Node.js 22+, npm, a MongoDB Atlas cluster with Vector Search, and a Groq API key. The embedding model downloads from Hugging Face on first use; allow outbound access and provide a persistent model cache on hosted deployments.
 
 1. `npm install` at the repository root.
-2. Copy `apps/api/.env.example` to `apps/api/.env` and fill in `MONGODB_URI`, `JWT_SECRET` (at least 32 random characters), and `GROQ_API_KEY`. Copy `apps/web/.env.example` to `apps/web/.env` if you need to change the API URL.
-3. Create the vector index below in Atlas, or run `npm run atlas:index -w @hyundai/api` with the API environment loaded. Wait until its status is **Ready**.
-4. Start the API with `npm run dev:api`. Start the client with `npm run dev:web` in another terminal.
+2. Copy `apps/server/.env.example` to `apps/server/.env` and fill in `MONGODB_URI`, `JWT_SECRET` (at least 32 random characters), and `GROQ_API_KEY`. Copy `apps/client/.env.example` to `apps/client/.env` if you need to change the API URL.
+3. Create the vector index below in Atlas, or run `npm run atlas:index -w @hyundai/server` with the API environment loaded. Wait until its status is **Ready**.
+4. Start the API with `npm run dev:server`. Start the client with `npm run dev:client` in another terminal.
 5. Open `http://localhost:5173`, register, and upload a text based Hyundai PDF brochure. Scanned PDFs need OCR before upload; image only pages have no extractable text.
 
-The API uses `http://localhost:4000/api` by default. Vite proxies `/api` to it. `npm run dev:api` loads `apps/api/.env` automatically when present.
+The API uses `http://localhost:4000/api` by default. Vite proxies `/api` to it. `npm run dev:server` loads `apps/server/.env` automatically when present.
 
 ### MongoDB Atlas Vector Search
 
@@ -107,15 +107,15 @@ Upload returns `Pending`; the API asynchronously transitions through `Processing
 
 ## Deployment
 
-**Render:** Create a Node web service from this repository, set the root to the repository root, build command `npm ci && npm run build -w @hyundai/api`, start command `npm run start -w @hyundai/api`, and configure the API environment variables. Set `FRONTEND_URL` to the exact Vercel origin. Use a supported Node 22+ runtime. GridFS avoids reliance on Render's ephemeral filesystem.
+**Render:** Use the root `render.yaml` Blueprint. It builds with `npm ci --include=dev && npm run build -w @hyundai/server` and starts with `npm run start -w @hyundai/server`. Configure the API environment variables and set `FRONTEND_URL` to the exact Vercel origin. GridFS avoids reliance on Render's ephemeral filesystem.
 
-**Vercel:** Import the repository, set root directory `apps/web`, framework Vite, build command `npm run build`, output directory `dist`, and `VITE_API_BASE_URL=https://YOUR-RENDER-HOST/api`. The `vercel.json` rewrite supports client routes. After deployment, update `FRONTEND_URL` on Render and redeploy it.
+**Vercel:** Import the repository, set root directory `apps/client`, framework Vite, build command `npm run build`, output directory `dist`, and `VITE_API_BASE_URL=https://YOUR-RENDER-HOST/api`. The `vercel.json` rewrite supports client routes. After deployment, update `FRONTEND_URL` on Render and redeploy it.
 
 **GitHub:** Create a private or public repository, add it as a remote, and push this source tree after reviewing `.gitignore`. No real `.env` files should be committed.
 
 ## Verification
 
-Run `npm run build` and `npm test`. These check TypeScript, client bundling, and document processing helpers, including a real PDF byte stream. With the API running and Atlas configured, `npm run test:live -w @hyundai/api` checks registration, login, protected routes, and invalid upload. Set `BROCHURE_FILE` to a PDF path to also check GridFS upload, status, authorized preview, model correction, and deletion. With `BROCHURE_FILE` and a Groq key configured, `npm run test:rag -w @hyundai/api` ingests the brochure, waits for processing, checks a cited answer, a follow up, and an unsupported question, then cleans up its test account and document. Set `SECOND_BROCHURE_FILE` to another model's PDF to include comparison and recommendation checks. A failed vector index query means the Atlas index is absent or not ready; it is not silently replaced with another retrieval method.
+Run `npm run build` and `npm test`. These check TypeScript, client bundling, and document processing helpers, including a real PDF byte stream. With the API running and Atlas configured, `npm run test:live -w @hyundai/server` checks registration, login, protected routes, and invalid upload. Set `BROCHURE_FILE` to a PDF path to also check GridFS upload, status, authorized preview, model correction, and deletion. With `BROCHURE_FILE` and a Groq key configured, `npm run test:rag -w @hyundai/server` ingests the brochure, waits for processing, checks a cited answer, a follow up, and an unsupported question, then cleans up its test account and document. Set `SECOND_BROCHURE_FILE` to another model's PDF to include comparison and recommendation checks. A failed vector index query means the Atlas index is absent or not ready; it is not silently replaced with another retrieval method.
 
 ## Operational notes
 

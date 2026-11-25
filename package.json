@@ -4,9 +4,9 @@
   "engines": { "node": ">=22" },
   "workspaces": ["apps/*"],
   "scripts": {
-    "dev:api": "npm run start:dev -w @hyundai/api",
-    "dev:web": "npm run dev -w @hyundai/web",
-    "build": "npm run build -w @hyundai/api && npm run build -w @hyundai/web",
-    "test": "npm run test -w @hyundai/api"
+    "dev:server": "npm run start:dev -w @hyundai/server",
+    "dev:client": "npm run dev -w @hyundai/client",
+    "build": "npm run build -w @hyundai/server && npm run build -w @hyundai/client",
+    "test": "npm run test -w @hyundai/server"
   }
 }
