@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const dns = require('node:dns');
 const mongoose = require('mongoose');
+const { EmbeddingsService } = require('../dist/embeddings.js');
 if (process.env.MONGODB_DNS_SERVERS) dns.setServers(process.env.MONGODB_DNS_SERVERS.split(',').map(x => x.trim()).filter(Boolean));
 const base = process.env.API_BASE_URL || 'http://localhost:4000/api';
 const email = `codex-smoke-${crypto.randomBytes(6).toString('hex')}@example.invalid`;
@@ -39,6 +40,19 @@ async function main() {
         if (['Completed', 'Failed'].includes(status.processingStatus)) break;
       }
       assert.ok(['Completed', 'Failed'].includes(status.processingStatus));
+      console.log(`Brochure processing: ${status.processingStatus}, ${status.totalChunks} chunks`);
+      if (status.processingStatus === 'Completed') {
+        const queryVector = (await new EmbeddingsService().embed(['Creta engine displacement specifications']))[0];
+        await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 15000 });
+        const matches = await mongoose.connection.db.collection('document_chunks').aggregate([
+          { $vectorSearch: { index: process.env.VECTOR_INDEX_NAME || 'brochure_vector_index', path: 'embedding', queryVector, numCandidates: 100, limit: 5, filter: { userId: new mongoose.Types.ObjectId(registered.data.user.id), documentId: new mongoose.Types.ObjectId(id) } } },
+          { $project: { pageNumber: 1, content: 1, vehicleModel: 1 } }
+        ]).toArray();
+        assert.ok(matches.length > 0);
+        assert.ok(matches.every(match => match.pageNumber > 0 && match.vehicleModel === 'Creta'));
+        await mongoose.disconnect();
+        console.log(`Atlas vector retrieval: ${matches.length} matching chunks`);
+      }
       const fileResponse = await fetch(`${base}/documents/${id}/file`, { headers: { Authorization: `Bearer ${registered.data.token}` } });
       assert.equal(fileResponse.status, 200);
       assert.equal(fileResponse.headers.get('content-type'), 'application/pdf');

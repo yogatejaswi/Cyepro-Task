@@ -5,7 +5,7 @@ const path = require('node:path');
 const dns = require('node:dns');
 const mongoose = require('mongoose');
 if (process.env.MONGODB_DNS_SERVERS) dns.setServers(process.env.MONGODB_DNS_SERVERS.split(',').map(x => x.trim()).filter(Boolean));
-if (!process.env.OPENAI_API_KEY || !process.env.BROCHURE_FILE) throw new Error('Set OPENAI_API_KEY and BROCHURE_FILE before the live RAG test');
+if (!process.env.GROQ_API_KEY || !process.env.BROCHURE_FILE) throw new Error('Set GROQ_API_KEY and BROCHURE_FILE before the live RAG test');
 const base = process.env.API_BASE_URL || 'http://localhost:4000/api';
 const email = `codex-rag-${crypto.randomBytes(6).toString('hex')}@example.invalid`;
 const password = crypto.randomBytes(18).toString('base64url');

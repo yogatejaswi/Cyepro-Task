@@ -25,7 +25,7 @@ describe('authentication', () => {
 
 describe('document validation', () => {
   it('rejects a disguised non-PDF before storage', async () => {
-    const service = new DocumentsService({} as any, {} as any, {} as any, {} as any);
+    const service = new DocumentsService({} as any, {} as any, {} as any, {} as any, {} as any);
     await expect(service.upload('507f1f77bcf86cd799439011', { buffer: Buffer.from('plain text'), size: 200, originalname: 'fake.pdf' } as any)).rejects.toMatchObject({ status: 400 });
   });
 });
@@ -35,28 +35,27 @@ describe('retrieval', () => {
     const userId = '507f1f77bcf86cd799439011';
     const docs: any = { distinct: vi.fn().mockResolvedValue(['Creta']) };
     const chunks: any = { aggregate: vi.fn().mockResolvedValue([{ _id: 'c1', documentId: '507f1f77bcf86cd799439012', vehicleModel: 'Creta', content: 'Six airbags are listed.', pageNumber: 4, section: 'Safety', metadata: { sourceDocumentName: 'creta.pdf' }, score: 0.95 }]) };
-    const rag = new RagService(docs, chunks);
-    (rag as any).ai = { embeddings: { create: vi.fn().mockResolvedValue({ data: [{ embedding: Array(1536).fill(0.1) }] }) }, responses: { create: vi.fn().mockResolvedValue({ output_text: 'The brochure lists six airbags [1].' }) } };
-    const prior = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = 'test-key';
+    const rag = new RagService(docs, chunks, { embed: vi.fn().mockResolvedValue([Array(384).fill(0.1)]) } as any);
+    (rag as any).ai = { chat: { completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: 'The brochure lists six airbags [1].' } }] }) } } };
+    const prior = process.env.GROQ_API_KEY; process.env.GROQ_API_KEY = 'test-key';
     try {
       const result = await rag.answer(userId, 'What safety features does Creta have?');
       expect(result.sources[0]).toMatchObject({ fileName: 'creta.pdf', vehicleModel: 'Creta', pageNumber: 4 });
       expect(chunks.aggregate.mock.calls[0][0][0].$vectorSearch.filter.vehicleModel).toBe('Creta');
       expect(String(chunks.aggregate.mock.calls[0][0][0].$vectorSearch.filter.userId)).toBe(userId);
       expect(result.content).toContain('[1]');
-    } finally { if (prior === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = prior; }
+    } finally { if (prior === undefined) delete process.env.GROQ_API_KEY; else process.env.GROQ_API_KEY = prior; }
   });
   it('adds variant filtered retrieval alongside model retrieval', async () => {
     const docs: any = { distinct: vi.fn().mockResolvedValue(['Alcazar']) };
     const chunks: any = { aggregate: vi.fn().mockResolvedValue([]) };
-    const rag = new RagService(docs, chunks);
-    (rag as any).ai = { embeddings: { create: vi.fn().mockResolvedValue({ data: [{ embedding: Array(1536).fill(0.1) }] }) } };
-    const prior = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = 'test-key';
+    const rag = new RagService(docs, chunks, { embed: vi.fn().mockResolvedValue([Array(384).fill(0.1)]) } as any);
+    const prior = process.env.GROQ_API_KEY; process.env.GROQ_API_KEY = 'test-key';
     try {
       await rag.answer('507f1f77bcf86cd799439011', 'Compare Alcazar Prestige and Platinum variants');
       const filters = chunks.aggregate.mock.calls.map(call => call[0][0].$vectorSearch.filter);
       expect(filters.map(filter => filter.variantName).filter(Boolean)).toEqual(['PRESTIGE', 'PLATINUM']);
       expect(filters.every(filter => filter.vehicleModel === 'Alcazar')).toBe(true);
-    } finally { if (prior === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = prior; }
+    } finally { if (prior === undefined) delete process.env.GROQ_API_KEY; else process.env.GROQ_API_KEY = prior; }
   });
 });

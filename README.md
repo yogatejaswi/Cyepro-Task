@@ -1,6 +1,6 @@
 # Hyundai Automotive Assistant
 
-An authenticated React and NestJS application that ingests Hyundai PDF brochures, stores their files in MongoDB GridFS, embeds page aware text chunks with OpenAI, retrieves evidence through MongoDB Atlas Vector Search, and generates cited answers. Vehicle comparisons and recommendations use the same retrieval path.
+An authenticated React and NestJS application that ingests Hyundai PDF brochures, stores their files in MongoDB GridFS, embeds page aware text chunks locally with MiniLM, retrieves evidence through MongoDB Atlas Vector Search, and generates cited answers with Groq. Vehicle comparisons and recommendations use the same retrieval path. This provider choice replaces the original OpenAI design at the user's request.
 
 ## Architecture
 
@@ -9,7 +9,8 @@ React/Vite ──JWT──> NestJS REST API ──> MongoDB Atlas
                            │                ├─ users, documents, chunks
                            │                ├─ conversations, messages, logs
                            │                └─ GridFS brochure files
-                           └──> OpenAI embeddings + responses
+                           ├──> local MiniLM embeddings
+                           └──> Groq answer generation
 ```
 
 `apps/api` owns authentication, authorization, document processing, retrieval, and generation. `apps/web` owns the responsive client. All user data queries include the authenticated user ID. The API key and database URI stay on the server.
@@ -23,15 +24,16 @@ React/Vite ──JWT──> NestJS REST API ──> MongoDB Atlas
 - [x] Atlas vector retrieval, cited chat, comparison, recommendations
 - [x] Environment templates, deployment configuration, API guide
 - [x] Live Atlas connection, vector index creation, and auth/API smoke test
-- [ ] Live OpenAI embedding, vector retrieval, and generated answer verification (requires an API key)
+- [x] Live PDF ingestion with local embeddings and Atlas vector retrieval
+- [ ] Live Groq answer generation and citation verification
 - [ ] GitHub remote, public deployment URLs, demonstration video (requires accounts and a live configured deployment)
 
 ## Local setup
 
-Requires Node.js 22+, npm, a MongoDB Atlas cluster with Vector Search, and an OpenAI API key.
+Requires Node.js 22+, npm, a MongoDB Atlas cluster with Vector Search, and a Groq API key. The embedding model downloads from Hugging Face on first use; allow outbound access and provide a persistent model cache on hosted deployments.
 
 1. `npm install` at the repository root.
-2. Copy `apps/api/.env.example` to `apps/api/.env` and fill in `MONGODB_URI`, `JWT_SECRET` (at least 32 random characters), and `OPENAI_API_KEY`. Copy `apps/web/.env.example` to `apps/web/.env` if you need to change the API URL.
+2. Copy `apps/api/.env.example` to `apps/api/.env` and fill in `MONGODB_URI`, `JWT_SECRET` (at least 32 random characters), and `GROQ_API_KEY`. Copy `apps/web/.env.example` to `apps/web/.env` if you need to change the API URL.
 3. Create the vector index below in Atlas, or run `npm run atlas:index -w @hyundai/api` with the API environment loaded. Wait until its status is **Ready**.
 4. Start the API with `npm run dev:api`. Start the client with `npm run dev:web` in another terminal.
 5. Open `http://localhost:5173`, register, and upload a text based Hyundai PDF brochure. Scanned PDFs need OCR before upload; image only pages have no extractable text.
@@ -45,7 +47,7 @@ Create a **Vector Search** index named `brochure_vector_index` on the `document_
 ```json
 {
   "fields": [
-    { "type": "vector", "path": "embedding", "numDimensions": 1536, "similarity": "cosine" },
+    { "type": "vector", "path": "embedding", "numDimensions": 384, "similarity": "cosine" },
     { "type": "filter", "path": "userId" },
     { "type": "filter", "path": "documentId" },
     { "type": "filter", "path": "vehicleModel" },
@@ -54,7 +56,7 @@ Create a **Vector Search** index named `brochure_vector_index` on the `document_
 }
 ```
 
-`text-embedding-3-small` produces 1536 dimensions with the default setting. Changing the embedding model requires rebuilding all chunks and updating the index dimensions. The API rejects embeddings of a different size. Atlas network access and database user permissions must allow the API host to connect. MongoDB Compass can inspect the same cluster with its Atlas connection URI; it is an inspection tool, not the database server.
+The local `onnx-community/all-MiniLM-L6-v2-ONNX` model produces 384 dimensional vectors with mean pooling and normalization. Changing the embedding model requires rebuilding all chunks and updating the index dimensions. The API rejects embeddings of a different size. Atlas network access and database user permissions must allow the API host to connect. MongoDB Compass can inspect the same cluster with its Atlas connection URI; it is an inspection tool, not the database server.
 
 ### Configuration
 
@@ -65,14 +67,15 @@ Create a **Vector Search** index named `brochure_vector_index` on the `document_
 | `MONGODB_URI` | Atlas connection string |
 | `MONGODB_DNS_SERVERS` | Optional DNS resolver list when Node cannot resolve Atlas SRV records locally |
 | `JWT_SECRET` | Long random signing key |
-| `OPENAI_API_KEY` | Server side OpenAI key |
-| `OPENAI_MODEL` | Responses API model, default `gpt-4.1-mini` |
-| `OPENAI_EMBEDDING_MODEL` | Must produce 1536 dimensions; default `text-embedding-3-small` |
+| `GROQ_API_KEY` | Server side Groq key for answer generation |
+| `GROQ_MODEL` | Groq chat model, default `openai/gpt-oss-20b` |
+| `EMBEDDING_MODEL` | Local embedding model; must produce 384 dimensions |
+| `EMBEDDING_CACHE_DIR` | Optional persistent model download cache directory |
 | `FRONTEND_URL` | Allowed CORS origin; comma separated for multiple origins |
 | `VECTOR_INDEX_NAME` | Atlas index name |
 | `CHUNK_SIZE`, `CHUNK_OVERLAP` | Character chunk size and overlap |
 
-Client: `VITE_API_BASE_URL` must be the full deployed API URL ending in `/api` on Vercel, or `/api` for local proxying. Never place the OpenAI key or MongoDB URI in a `VITE_` variable.
+Client: `VITE_API_BASE_URL` must be the full deployed API URL ending in `/api` on Vercel, or `/api` for local proxying. Never place the Groq key or MongoDB URI in a `VITE_` variable.
 
 ## API
 
@@ -112,7 +115,7 @@ Upload returns `Pending`; the API asynchronously transitions through `Processing
 
 ## Verification
 
-Run `npm run build` and `npm test`. These check TypeScript, client bundling, and document processing helpers, including a real PDF byte stream. With the API running and Atlas configured, `npm run test:live -w @hyundai/api` checks registration, login, protected routes, and invalid upload. Set `BROCHURE_FILE` to a PDF path to also check GridFS upload, status, authorized preview, model correction, and deletion. With `BROCHURE_FILE` and an OpenAI key configured, `npm run test:rag -w @hyundai/api` ingests the brochure, waits for processing, checks a cited answer, and cleans up its test account and document. A failed vector index query means the Atlas index is absent or not ready; it is not silently replaced with another retrieval method.
+Run `npm run build` and `npm test`. These check TypeScript, client bundling, and document processing helpers, including a real PDF byte stream. With the API running and Atlas configured, `npm run test:live -w @hyundai/api` checks registration, login, protected routes, and invalid upload. Set `BROCHURE_FILE` to a PDF path to also check GridFS upload, status, authorized preview, model correction, and deletion. With `BROCHURE_FILE` and a Groq key configured, `npm run test:rag -w @hyundai/api` ingests the brochure, waits for processing, checks a cited answer, and cleans up its test account and document. A failed vector index query means the Atlas index is absent or not ready; it is not silently replaced with another retrieval method.
 
 ## Operational notes
 

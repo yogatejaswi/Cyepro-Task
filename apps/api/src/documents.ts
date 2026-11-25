@@ -4,19 +4,18 @@ import { InjectModel } from '@nestjs/mongoose';
 import { InjectConnection } from '@nestjs/mongoose';
 import { GridFSBucket, ObjectId } from 'mongodb';
 import { Connection, Model } from 'mongoose';
-import OpenAI from 'openai';
 import { Response } from 'express';
 import { AuthGuard, ReqUser, AuthRequest } from './auth';
 import { chunkPages, extractPdf, inferModel } from './pdf';
 import { UpdateDocumentDto } from './dto';
+import { EmbeddingsService } from './embeddings';
 
 function oid(id: string) { if (!/^[a-f\d]{24}$/i.test(id)) throw new BadRequestException('Invalid document ID'); return new ObjectId(id); }
 
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
-  private readonly ai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'missing' });
-  constructor(@InjectModel('Document') private docs: Model<any>, @InjectModel('Chunk') private chunks: Model<any>, @InjectModel('ProcessingLog') private logs: Model<any>, @InjectConnection() private conn: Connection) {}
+  constructor(@InjectModel('Document') private docs: Model<any>, @InjectModel('Chunk') private chunks: Model<any>, @InjectModel('ProcessingLog') private logs: Model<any>, @InjectConnection() private conn: Connection, private embeddings: EmbeddingsService) {}
   private bucket() { if (!this.conn.db) throw new Error('Database unavailable'); return new GridFSBucket(this.conn.db, { bucketName: 'brochures' }); }
   async list(userId: string) { return this.docs.find({ uploadedBy: oid(userId) }).select('-storageKey').sort({ createdAt: -1 }).lean(); }
   async one(userId: string, id: string) { const doc = await this.docs.findOne({ _id: oid(id), uploadedBy: oid(userId) }).select('-storageKey').lean(); if (!doc) throw new NotFoundException('Document not found'); return doc; }
@@ -45,7 +44,6 @@ export class DocumentsService {
     if (!doc) return;
     await this.logs.create({ documentId: doc._id, status: 'Processing', message: 'PDF ingestion started' });
     try {
-      if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not configured');
       const pages = await extractPdf(await this.readFile(doc.storageKey));
       const vehicleModel = doc.vehicleModel === 'Unknown model' ? inferModel(doc.fileName, pages.map(p => p.text).join(' ')) : doc.vehicleModel;
       if (vehicleModel !== doc.vehicleModel) await this.docs.updateOne({ _id: doc._id }, { $set: { vehicleModel } });
@@ -54,10 +52,9 @@ export class DocumentsService {
       const records: any[] = [];
       for (let i = 0; i < prepared.length; i += 32) {
         const batch = prepared.slice(i, i + 32);
-        const result = await this.ai.embeddings.create({ model: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small', input: batch.map(x => x.content) });
+        const vectors = await this.embeddings.embed(batch.map(x => x.content));
         for (let j = 0; j < batch.length; j++) {
-          const embedding = result.data[j]?.embedding;
-          if (!embedding || embedding.length !== 1536) throw new Error('Embedding dimension mismatch; expected 1536');
+          const embedding = vectors[j];
           records.push({ ...batch[j], embedding, documentId: doc._id, userId: doc.uploadedBy, vehicleModel, metadata: { sourceDocumentName: doc.fileName, uploadedAt: doc.createdAt } });
         }
       }
@@ -68,7 +65,7 @@ export class DocumentsService {
       await this.logs.create({ documentId: doc._id, status: 'Completed', message: `Stored ${records.length} chunks from ${pages.length} pages` });
     } catch (err: any) {
       await this.chunks.deleteMany({ documentId: doc._id });
-      const message = err?.status === 401 || err?.code === 'invalid_api_key' ? 'OpenAI authentication failed. Configure a valid OpenAI API key.' : String(err?.message || err).slice(0, 500);
+      const message = String(err?.message || err).slice(0, 500);
       await this.docs.updateOne({ _id: doc._id }, { $set: { processingStatus: 'Failed', totalChunks: 0, errorMessage: message } });
       await this.logs.create({ documentId: doc._id, status: 'Failed', message });
       this.logger.error(`Processing ${id}: ${message}`);

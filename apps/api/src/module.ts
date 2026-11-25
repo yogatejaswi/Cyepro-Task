@@ -7,6 +7,7 @@ import { AuthController, AuthGuard } from './auth';
 import { DocumentsController, DocumentsService } from './documents';
 import { ChatController, RagService, VehiclesController } from './chat';
 import { ChunkSchema, ConversationSchema, DocumentSchema, MessageSchema, ProcessingLogSchema, UserSchema } from './schemas';
+import { EmbeddingsService } from './embeddings';
 
 @Injectable()
 class RecoverIngestion implements OnApplicationBootstrap {
@@ -22,6 +23,6 @@ class RecoverIngestion implements OnApplicationBootstrap {
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }])
   ],
   controllers: [AuthController, DocumentsController, ChatController, VehiclesController],
-  providers: [AuthGuard, DocumentsService, RagService, RecoverIngestion, { provide: APP_GUARD, useClass: ThrottlerGuard }]
+  providers: [AuthGuard, DocumentsService, RagService, EmbeddingsService, RecoverIngestion, { provide: APP_GUARD, useClass: ThrottlerGuard }]
 })
 export class AppModule {}

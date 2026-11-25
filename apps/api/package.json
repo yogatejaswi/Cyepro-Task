@@ -12,6 +12,7 @@
     "test": "vitest run && npm run build && node tests/pdf-smoke.cjs"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.2",
     "@nestjs/common": "^11.1.0",
     "@nestjs/core": "^11.1.0",
     "@nestjs/jwt": "^11.0.0",
