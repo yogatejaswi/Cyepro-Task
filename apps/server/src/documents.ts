@@ -15,7 +15,11 @@ function oid(id: string) { if (!/^[a-f\d]{24}$/i.test(id)) throw new BadRequestE
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
+  private processingTail: Promise<void> = Promise.resolve();
   constructor(@InjectModel('Document') private docs: Model<any>, @InjectModel('Chunk') private chunks: Model<any>, @InjectModel('ProcessingLog') private logs: Model<any>, @InjectConnection() private conn: Connection, private embeddings: EmbeddingsService) {}
+  private enqueue(id: string) {
+    this.processingTail = this.processingTail.then(() => this.process(id)).catch(err => this.logger.error(`Processing ${id}: ${String(err)}`));
+  }
   private bucket() { if (!this.conn.db) throw new Error('Database unavailable'); return new GridFSBucket(this.conn.db, { bucketName: 'brochures' }); }
   async list(userId: string) { return this.docs.find({ uploadedBy: oid(userId) }).select('-storageKey').sort({ createdAt: -1 }).lean(); }
   async one(userId: string, id: string) { const doc = await this.docs.findOne({ _id: oid(id), uploadedBy: oid(userId) }).select('-storageKey').lean(); if (!doc) throw new NotFoundException('Document not found'); return doc; }
@@ -32,7 +36,7 @@ export class DocumentsService {
     let doc: any;
     try { doc = await this.docs.create({ fileName, vehicleModel: model, storageKey, uploadedBy: oid(userId) }); }
     catch (err) { await this.bucket().delete(storageKey); throw err; }
-    setImmediate(() => void this.process(String(doc._id)));
+    setImmediate(() => this.enqueue(String(doc._id)));
     return this.one(userId, String(doc._id));
   }
   private async readFile(key: ObjectId): Promise<Buffer> {
@@ -63,21 +67,20 @@ export class DocumentsService {
       if (vehicleModel !== doc.vehicleModel) await this.docs.updateOne({ _id: doc._id }, { $set: { vehicleModel } });
       const prepared = chunkPages(pages, Number(process.env.CHUNK_SIZE || 1200), Number(process.env.CHUNK_OVERLAP || 180));
       if (!prepared.length) throw new Error('No extractable text found in PDF');
-      const records: any[] = [];
-      for (let i = 0; i < prepared.length; i += 32) {
-        const batch = prepared.slice(i, i + 32);
-        const vectors = await this.embeddings.embed(batch.map(x => x.content));
-        for (let j = 0; j < batch.length; j++) {
-          const embedding = vectors[j];
-          records.push({ ...batch[j], embedding, documentId: doc._id, userId: doc.uploadedBy, vehicleModel, metadata: { sourceDocumentName: doc.fileName, uploadedAt: doc.createdAt } });
-        }
-      }
       await this.chunks.deleteMany({ documentId: doc._id });
-      try { await this.chunks.insertMany(records, { ordered: true }); }
-      catch (err) { await this.chunks.deleteMany({ documentId: doc._id }); throw err; }
-      await this.waitForSearchVisibility(doc, records[0].embedding);
-      await this.docs.updateOne({ _id: doc._id }, { $set: { processingStatus: 'Completed', totalPages: pages.length, totalChunks: records.length, processedAt: new Date() } });
-      await this.logs.create({ documentId: doc._id, status: 'Completed', message: `Stored ${records.length} chunks from ${pages.length} pages` });
+      let firstEmbedding: number[] | undefined;
+      let totalChunks = 0;
+      for (let i = 0; i < prepared.length; i += 4) {
+        const batch = prepared.slice(i, i + 4);
+        const vectors = await this.embeddings.embed(batch.map(x => x.content));
+        firstEmbedding ||= vectors[0];
+        const records = batch.map((chunk, j) => ({ ...chunk, embedding: vectors[j], documentId: doc._id, userId: doc.uploadedBy, vehicleModel, metadata: { sourceDocumentName: doc.fileName, uploadedAt: doc.createdAt } }));
+        await this.chunks.insertMany(records, { ordered: true });
+        totalChunks += records.length;
+      }
+      await this.waitForSearchVisibility(doc, firstEmbedding!);
+      await this.docs.updateOne({ _id: doc._id }, { $set: { processingStatus: 'Completed', totalPages: pages.length, totalChunks, processedAt: new Date() } });
+      await this.logs.create({ documentId: doc._id, status: 'Completed', message: `Stored ${totalChunks} chunks from ${pages.length} pages` });
     } catch (err: any) {
       await this.chunks.deleteMany({ documentId: doc._id });
       const message = String(err?.message || err).slice(0, 500);
@@ -90,7 +93,7 @@ export class DocumentsService {
     await this.one(userId, id);
     const doc = await this.docs.findOneAndUpdate({ _id: oid(id), uploadedBy: oid(userId), processingStatus: 'Failed' }, { $set: { processingStatus: 'Pending', errorMessage: '' } }, { new: true });
     if (!doc) throw new BadRequestException('Only failed documents can be reprocessed');
-    setImmediate(() => void this.process(id));
+    setImmediate(() => this.enqueue(id));
     return { status: 'Pending' };
   }
   async updateModel(userId: string, id: string, rawModel: string) {
@@ -122,7 +125,7 @@ export class DocumentsService {
     const stale = await this.docs.updateMany({ processingStatus: 'Processing' }, { $set: { processingStatus: 'Pending' } });
     const pending = await this.docs.find({ processingStatus: 'Pending' }).select('_id').lean();
     if (stale.modifiedCount) this.logger.warn(`Recovering ${stale.modifiedCount} interrupted ingestions`);
-    for (const doc of pending) setImmediate(() => void this.process(String(doc._id)));
+    for (const doc of pending) setImmediate(() => this.enqueue(String(doc._id)));
   }
 }
 
