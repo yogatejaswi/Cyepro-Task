@@ -8,6 +8,7 @@ import { DocumentsController, DocumentsService } from './documents';
 import { ChatController, RagService, VehiclesController } from './chat';
 import { ChunkSchema, ConversationSchema, DocumentSchema, MessageSchema, ProcessingLogSchema, UserSchema } from './schemas';
 import { EmbeddingsService } from './embeddings';
+import { HealthController } from './health';
 
 @Injectable()
 class RecoverIngestion implements OnApplicationBootstrap {
@@ -22,7 +23,7 @@ class RecoverIngestion implements OnApplicationBootstrap {
     JwtModule.register({ secret: process.env.JWT_SECRET || 'development-only-change-this-secret-now', signOptions: { expiresIn: '8h' } }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }])
   ],
-  controllers: [AuthController, DocumentsController, ChatController, VehiclesController],
+  controllers: [HealthController, AuthController, DocumentsController, ChatController, VehiclesController],
   providers: [AuthGuard, DocumentsService, RagService, EmbeddingsService, RecoverIngestion, { provide: APP_GUARD, useClass: ThrottlerGuard }]
 })
 export class AppModule {}

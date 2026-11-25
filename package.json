@@ -1,6 +1,7 @@
 {
   "name": "hyundai-automotive-assistant",
   "private": true,
+  "engines": { "node": ">=22" },
   "workspaces": ["apps/*"],
   "scripts": {
     "dev:api": "npm run start:dev -w @hyundai/api",
