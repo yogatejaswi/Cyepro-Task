@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Delete, Get, Injectable, Logger, NotFoundException, Param, Post, Res, UploadedFile, UseGuards, UseInterceptors, Body } from '@nestjs/common';
+import { BadRequestException, Controller, Delete, Get, Injectable, Logger, NotFoundException, Param, Patch, Post, Res, UploadedFile, UseGuards, UseInterceptors, Body } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { InjectModel } from '@nestjs/mongoose';
 import { InjectConnection } from '@nestjs/mongoose';
@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 import { Response } from 'express';
 import { AuthGuard, ReqUser, AuthRequest } from './auth';
 import { chunkPages, extractPdf, inferModel } from './pdf';
+import { UpdateDocumentDto } from './dto';
 
 function oid(id: string) { if (!/^[a-f\d]{24}$/i.test(id)) throw new BadRequestException('Invalid document ID'); return new ObjectId(id); }
 
@@ -46,6 +47,8 @@ export class DocumentsService {
     try {
       if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not configured');
       const pages = await extractPdf(await this.readFile(doc.storageKey));
+      const vehicleModel = doc.vehicleModel === 'Unknown model' ? inferModel(doc.fileName, pages.map(p => p.text).join(' ')) : doc.vehicleModel;
+      if (vehicleModel !== doc.vehicleModel) await this.docs.updateOne({ _id: doc._id }, { $set: { vehicleModel } });
       const prepared = chunkPages(pages, Number(process.env.CHUNK_SIZE || 1200), Number(process.env.CHUNK_OVERLAP || 180));
       if (!prepared.length) throw new Error('No extractable text found in PDF');
       const records: any[] = [];
@@ -55,7 +58,7 @@ export class DocumentsService {
         for (let j = 0; j < batch.length; j++) {
           const embedding = result.data[j]?.embedding;
           if (!embedding || embedding.length !== 1536) throw new Error('Embedding dimension mismatch; expected 1536');
-          records.push({ ...batch[j], embedding, documentId: doc._id, userId: doc.uploadedBy, vehicleModel: doc.vehicleModel, metadata: { sourceDocumentName: doc.fileName, uploadedAt: doc.createdAt } });
+          records.push({ ...batch[j], embedding, documentId: doc._id, userId: doc.uploadedBy, vehicleModel, metadata: { sourceDocumentName: doc.fileName, uploadedAt: doc.createdAt } });
         }
       }
       await this.chunks.deleteMany({ documentId: doc._id });
@@ -77,6 +80,14 @@ export class DocumentsService {
     if (!doc) throw new BadRequestException('Only failed documents can be reprocessed');
     setImmediate(() => void this.process(id));
     return { status: 'Pending' };
+  }
+  async updateModel(userId: string, id: string, rawModel: string) {
+    const vehicleModel = rawModel.trim();
+    if (!/^[\p{L}\p{N} .()+_-]{2,80}$/u.test(vehicleModel)) throw new BadRequestException('Invalid vehicle model');
+    const doc = await this.docs.findOneAndUpdate({ _id: oid(id), uploadedBy: oid(userId), processingStatus: { $in: ['Completed', 'Failed'] } }, { $set: { vehicleModel } }, { new: true });
+    if (!doc) throw new BadRequestException('Only completed or failed documents can be edited');
+    await this.chunks.updateMany({ documentId: doc._id, userId: oid(userId) }, { $set: { vehicleModel } });
+    return this.one(userId, id);
   }
   async remove(userId: string, id: string) {
     const doc = await this.docs.findOne({ _id: oid(id), uploadedBy: oid(userId) });
@@ -110,6 +121,7 @@ export class DocumentsController {
   upload(@ReqUser() user: AuthRequest['user'], @UploadedFile() file: Express.Multer.File, @Body('vehicleModel') vehicleModel?: string) { return this.service.upload(user.id, file, vehicleModel); }
   @Get() list(@ReqUser() user: AuthRequest['user']) { return this.service.list(user.id); }
   @Get(':id') one(@ReqUser() user: AuthRequest['user'], @Param('id') id: string) { return this.service.one(user.id, id); }
+  @Patch(':id') update(@ReqUser() user: AuthRequest['user'], @Param('id') id: string, @Body() dto: UpdateDocumentDto) { return this.service.updateModel(user.id, id, dto.vehicleModel); }
   @Get(':id/status') async status(@ReqUser() user: AuthRequest['user'], @Param('id') id: string) { const d: any = await this.service.one(user.id, id); return { processingStatus: d.processingStatus, totalPages: d.totalPages, totalChunks: d.totalChunks, errorMessage: d.errorMessage }; }
   @Get(':id/file') file(@ReqUser() user: AuthRequest['user'], @Param('id') id: string, @Res() res: Response) { return this.service.stream(user.id, id, res); }
   @Post(':id/reprocess') reprocess(@ReqUser() user: AuthRequest['user'], @Param('id') id: string) { return this.service.reprocess(user.id, id); }

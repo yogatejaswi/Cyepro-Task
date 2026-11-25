@@ -13,5 +13,9 @@ describe('PDF processing helpers', () => {
   });
   it('infers known model from filename', () => {
     expect(inferModel('Hyundai-Creta-brochure.pdf')).toBe('Creta');
+    expect(inferModel('brochure.pdf', 'Introducing Hyundai Alcazar')).toBe('Alcazar');
+  });
+  it('normalizes variant names for exact Atlas filtering', () => {
+    expect(chunkPages([{ pageNumber: 1, text: 'SX (O) variant includes airbags.' }])[0].variantName).toBe('SX(O)');
   });
 });

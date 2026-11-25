@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start:dev": "node --env-file-if-exists=.env --import tsx --watch src/main.ts",
+    "start:dev": "npm run build && node --env-file-if-exists=.env dist/main.js",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
+    "atlas:index": "node --env-file-if-exists=.env scripts/setup-atlas.cjs",
+    "test:live": "node --env-file-if-exists=.env tests/live-smoke.cjs",
+    "test:rag": "node --env-file-if-exists=.env tests/rag-live.cjs",
     "test": "vitest run && npm run build && node tests/pdf-smoke.cjs"
   },
   "dependencies": {
@@ -31,7 +34,6 @@
     "@types/express": "^5.0.3",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.5.0",
-    "tsx": "^4.20.0",
     "typescript": "^5.9.2",
     "vitest": "^5.1.1"
   }

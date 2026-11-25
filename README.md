@@ -22,7 +22,8 @@ React/Vite ──JWT──> NestJS REST API ──> MongoDB Atlas
 - [x] PDF page extraction, chunking, embeddings, processing states, and recovery
 - [x] Atlas vector retrieval, cited chat, comparison, recommendations
 - [x] Environment templates, deployment configuration, API guide
-- [ ] Live Atlas/OpenAI end to end verification (requires credentials and brochures)
+- [x] Live Atlas connection, vector index creation, and auth/API smoke test
+- [ ] Live OpenAI embedding, vector retrieval, and generated answer verification (requires an API key)
 - [ ] GitHub remote, public deployment URLs, demonstration video (requires accounts and a live configured deployment)
 
 ## Local setup
@@ -31,7 +32,7 @@ Requires Node.js 22+, npm, a MongoDB Atlas cluster with Vector Search, and an Op
 
 1. `npm install` at the repository root.
 2. Copy `apps/api/.env.example` to `apps/api/.env` and fill in `MONGODB_URI`, `JWT_SECRET` (at least 32 random characters), and `OPENAI_API_KEY`. Copy `apps/web/.env.example` to `apps/web/.env` if you need to change the API URL.
-3. Create the vector index below in Atlas. Wait until its status is **Ready**.
+3. Create the vector index below in Atlas, or run `npm run atlas:index -w @hyundai/api` with the API environment loaded. Wait until its status is **Ready**.
 4. Start the API with `npm run dev:api`. Start the client with `npm run dev:web` in another terminal.
 5. Open `http://localhost:5173`, register, and upload a text based Hyundai PDF brochure. Scanned PDFs need OCR before upload; image only pages have no extractable text.
 
@@ -62,6 +63,7 @@ Create a **Vector Search** index named `brochure_vector_index` on the `document_
 | `PORT` | HTTP port, default 4000 |
 | `NODE_ENV` | Set to `production` in deployment |
 | `MONGODB_URI` | Atlas connection string |
+| `MONGODB_DNS_SERVERS` | Optional DNS resolver list when Node cannot resolve Atlas SRV records locally |
 | `JWT_SECRET` | Long random signing key |
 | `OPENAI_API_KEY` | Server side OpenAI key |
 | `OPENAI_MODEL` | Responses API model, default `gpt-4.1-mini` |
@@ -84,6 +86,7 @@ All routes are prefixed `/api`. Except register and login, send `Authorization: 
 | POST | `/documents/upload` | Multipart `file` PDF, optional `vehicleModel` |
 | GET | `/documents` | Own documents |
 | GET | `/documents/:id` | Own document metadata |
+| PATCH | `/documents/:id` | `{vehicleModel}`; correct a completed or failed brochure's model |
 | GET | `/documents/:id/status` | Processing status and error |
 | GET | `/documents/:id/file` | Authorized PDF preview/download |
 | POST | `/documents/:id/reprocess` | Retry a failed document |
@@ -109,7 +112,7 @@ Upload returns `Pending`; the API asynchronously transitions through `Processing
 
 ## Verification
 
-Run `npm run build` and `npm test`. These check TypeScript, client bundling, and deterministic document processing helpers. Full RAG verification requires an Atlas index, an OpenAI key, and actual brochures: register, upload a brochure, wait for `Completed`, ask a fact present on a known page, inspect its citation, compare models from two brochures, ask for an unsupported price, retry a failed upload, and delete a brochure. A failed vector index query means the Atlas index is absent or not ready; it is not silently replaced with another retrieval method.
+Run `npm run build` and `npm test`. These check TypeScript, client bundling, and document processing helpers, including a real PDF byte stream. With the API running and Atlas configured, `npm run test:live -w @hyundai/api` checks registration, login, protected routes, and invalid upload. Set `BROCHURE_FILE` to a PDF path to also check GridFS upload, status, authorized preview, model correction, and deletion. With `BROCHURE_FILE` and an OpenAI key configured, `npm run test:rag -w @hyundai/api` ingests the brochure, waits for processing, checks a cited answer, and cleans up its test account and document. A failed vector index query means the Atlas index is absent or not ready; it is not silently replaced with another retrieval method.
 
 ## Operational notes
 

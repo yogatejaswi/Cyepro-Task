@@ -24,22 +24,28 @@ export class RagService {
       if (count !== opts.documentIds.length) throw new BadRequestException('One or more documents are unavailable');
     }
     const named = opts.models?.length ? opts.models : available.filter(x => x !== 'Unknown model' && new RegExp(`(^|[^\\p{L}\\p{N}])${x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu').test(question));
-    const targets = named.length ? named.slice(0, 4) : [undefined];
+    const recommendation = /\b(?:recommend|suitable|best fit|which vehicle|which model)\b/i.test(question);
+    const targets = named.length ? named.slice(0, 4) : recommendation ? available.slice(0, 8) : [undefined];
+    const variantNames = [...new Set((question.match(/(?<![A-Za-z0-9])(?:Prestige|Platinum|Signature|Executive|SX\s*\(O\)|SX|EX|Sportz|Asta|Magna|Era)(?![A-Za-z0-9])/gi) || []).map(x => x.toUpperCase().replace(/\s+/g, '')))];
     const retrievalQuery = opts.history ? `${opts.history.slice(-1200)}\nCurrent question: ${question}` : question;
     const embedding = (await this.ai.embeddings.create({ model: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small', input: retrievalQuery })).data[0].embedding;
     if (embedding.length !== 1536) throw new Error('Embedding dimension mismatch; expected 1536');
     const found: any[] = [];
     for (const model of targets) {
-      const filter: any = { userId: objectId(userId) };
-      if (model) filter.vehicleModel = model;
-      if (opts.documentIds?.length) filter.documentId = { $in: opts.documentIds.map(objectId) };
-      const rows = await this.chunks.aggregate([
-        { $vectorSearch: { index: process.env.VECTOR_INDEX_NAME || 'brochure_vector_index', path: 'embedding', queryVector: embedding, numCandidates: 100, limit: model ? 6 : 12, filter } },
-        { $project: { documentId: 1, vehicleModel: 1, variantName: 1, content: 1, pageNumber: 1, section: 1, metadata: 1, score: { $meta: 'vectorSearchScore' } } }
-      ]);
-      found.push(...rows);
+      for (const variantName of [undefined, ...variantNames]) {
+        const filter: any = { userId: objectId(userId) };
+        if (model) filter.vehicleModel = model;
+        if (variantName) filter.variantName = variantName;
+        if (opts.documentIds?.length) filter.documentId = { $in: opts.documentIds.map(objectId) };
+        const rows = await this.chunks.aggregate([
+          { $vectorSearch: { index: process.env.VECTOR_INDEX_NAME || 'brochure_vector_index', path: 'embedding', queryVector: embedding, numCandidates: 100, limit: variantName ? 4 : recommendation ? 4 : model ? 6 : 12, filter } },
+          { $project: { documentId: 1, vehicleModel: 1, variantName: 1, content: 1, pageNumber: 1, section: 1, metadata: 1, score: { $meta: 'vectorSearchScore' } } }
+        ]);
+        found.push(...rows);
+      }
     }
-    const unique = [...new Map(found.map(x => [String(x._id), x])).values()].sort((a,b) => b.score-a.score).slice(0, 18);
+    const ranked = [...new Map(found.map(x => [String(x._id), x])).values()].sort((a,b) => b.score-a.score);
+    const unique = recommendation ? ranked.filter((x, i) => ranked.slice(0, i).filter(y => y.vehicleModel === x.vehicleModel).length < 3).slice(0, 24) : ranked.slice(0, 18);
     if (!unique.length) return { content: 'I could not find relevant information in your uploaded brochures.', sources: [] as Source[] };
     const sources: Source[] = unique.map(x => ({ documentId: String(x.documentId), fileName: x.metadata?.sourceDocumentName || 'Brochure', vehicleModel: x.vehicleModel, pageNumber: x.pageNumber, section: x.section, excerpt: x.content.slice(0, 380) }));
     const context = unique.map((x, i) => `[${i+1}] ${x.metadata?.sourceDocumentName} | ${x.vehicleModel} | page ${x.pageNumber} | ${x.section}\n${x.content}`).join('\n\n');

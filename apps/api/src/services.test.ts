@@ -46,4 +46,17 @@ describe('retrieval', () => {
       expect(result.content).toContain('[1]');
     } finally { if (prior === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = prior; }
   });
+  it('adds variant filtered retrieval alongside model retrieval', async () => {
+    const docs: any = { distinct: vi.fn().mockResolvedValue(['Alcazar']) };
+    const chunks: any = { aggregate: vi.fn().mockResolvedValue([]) };
+    const rag = new RagService(docs, chunks);
+    (rag as any).ai = { embeddings: { create: vi.fn().mockResolvedValue({ data: [{ embedding: Array(1536).fill(0.1) }] }) } };
+    const prior = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = 'test-key';
+    try {
+      await rag.answer('507f1f77bcf86cd799439011', 'Compare Alcazar Prestige and Platinum variants');
+      const filters = chunks.aggregate.mock.calls.map(call => call[0][0].$vectorSearch.filter);
+      expect(filters.map(filter => filter.variantName).filter(Boolean)).toEqual(['PRESTIGE', 'PLATINUM']);
+      expect(filters.every(filter => filter.vehicleModel === 'Alcazar')).toBe(true);
+    } finally { if (prior === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = prior; }
+  });
 });

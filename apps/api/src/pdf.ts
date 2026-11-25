@@ -45,7 +45,7 @@ export function chunkPages(pages: PdfPage[], size = 1200, overlap = 180): TextCh
       const content = text.slice(start, end).trim();
       if (content) {
         const section = sections.find(s => new RegExp(`\\b${s}\\b`, 'i').test(content.slice(0, 250))) || 'General';
-        const variantName = /\b(?:Prestige|Platinum|Signature|Executive|SX\s*\(O\)|SX|EX|S\+?|Sportz|Asta|Magna|Era)\b/i.exec(content)?.[0] || '';
+        const variantName = (/(?<![A-Za-z0-9])(?:Prestige|Platinum|Signature|Executive|SX\s*\(O\)|SX|EX|Sportz|Asta|Magna|Era)(?![A-Za-z0-9])/i.exec(content)?.[0] || '').toUpperCase().replace(/\s+/g, '');
         chunks.push({ content, pageNumber: page.pageNumber, section, variantName });
       }
       if (end === text.length) break;

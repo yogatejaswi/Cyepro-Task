@@ -2,9 +2,11 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
+import { setServers } from 'node:dns';
 import { AppModule } from './module';
 
 async function bootstrap() {
+  if (process.env.MONGODB_DNS_SERVERS) setServers(process.env.MONGODB_DNS_SERVERS.split(',').map(x => x.trim()).filter(Boolean));
   if (process.env.NODE_ENV === 'production' && (!process.env.MONGODB_URI || !process.env.OPENAI_API_KEY || !process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || !process.env.FRONTEND_URL)) throw new Error('Missing required production configuration');
   const app = await NestFactory.create(AppModule, { bodyParser: true });
   app.use(helmet());
