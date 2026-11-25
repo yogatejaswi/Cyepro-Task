@@ -68,7 +68,7 @@ export class DocumentsService {
       await this.logs.create({ documentId: doc._id, status: 'Completed', message: `Stored ${records.length} chunks from ${pages.length} pages` });
     } catch (err: any) {
       await this.chunks.deleteMany({ documentId: doc._id });
-      const message = String(err?.message || err).slice(0, 500);
+      const message = err?.status === 401 || err?.code === 'invalid_api_key' ? 'OpenAI authentication failed. Configure a valid OpenAI API key.' : String(err?.message || err).slice(0, 500);
       await this.docs.updateOne({ _id: doc._id }, { $set: { processingStatus: 'Failed', totalChunks: 0, errorMessage: message } });
       await this.logs.create({ documentId: doc._id, status: 'Failed', message });
       this.logger.error(`Processing ${id}: ${message}`);
